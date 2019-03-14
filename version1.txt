@@ -1,0 +1,393 @@
+t1=3;    t2=1;    t3=5;
+r1=1;    r2=1;    r3=1;
+i1=300;  i2=1;    i3=5;
+
+rainrate=140;
+
+
+IAWR= -(180-(atan((i1-r1)/(i3-r3))*57.29577));
+TAWR= -(180-(atan((t1-r1)/(t3-r3))*57.29577));
+RAWT= (atan((t1-r1)/(t3-r3))*57.29577);
+
+%disp(IAWR);
+%disp(TAWR);
+%disp(RAWT);
+
+%disp('angle is');
+%disp(ang);
+Frequency=[60e+9];
+TxArraySize=[16 16];
+TxArrayPosition=[t1; t2; t3];
+TxSteeringAngle=[TAWR;0];
+RxArraySize=[16 16];
+RxArrayPosition=[r1;r2;r3];
+RxSteeringAngle=[RAWT;0];
+IntArrayPosition=[i1;i2;i3];
+IntArraySize=[16 16];
+IntSteeringAngle=[IAWR;0];
+
+
+
+%free space path loss
+
+if ((0<rainrate)&&(rainrate<=0.25))
+    rr=0.00016;
+elseif ((0.25<rainrate)&&(rainrate<=1.25))
+    rr=0.00079;
+elseif ((1.25<rainrate)&&(rainrate<=5))
+    rr=0.0026;
+elseif ((5<rainrate)&&(rainrate<=25))
+    rr=0.0105;
+elseif ((25<rainrate)&&(rainrate<=50))
+    rr=0.018;
+elseif ((50<rainrate)&&(rainrate<=100))
+    rr=0.031;
+elseif ((100<rainrate)&&(rainrate<=150))
+    rr=0.043;
+else
+    rr=0;
+end
+%disp(rr);
+
+            d1 =((t1-r1)^2+(t2-r2)^2+(t3-r3)^2);
+            d2 =((i1-r1)^2+(i2-r2)^2+(i3-r3)^2);
+
+            d1=sqrt(d1);
+            d2=sqrt(d2);
+            
+            oa1=d1*0.015;
+            oa2=d2*0.015;
+            
+            r1=d1*rr;
+            r2=d2*rr;
+            
+            
+            pth1=-147.55+20*log10(Frequency)+ 20*log10(d1);
+            pth2=-147.55+20*log10(Frequency)+ 20*log10(d2);
+            
+            pthl1=(10^(pth1/20));
+            pthl2=(10^(pth2/20));
+            
+            oal1=(10^(oa1/20));
+            oal2=(10^(oa2/20));
+            
+            rl1=(10^(r1/20));
+            rl2=(10^(r2/20));
+            
+            
+            oagain1= 1/oal1;
+            oagain2= 1/oal2;
+            
+            rlgain1=1/rl1;
+            rlgain2=1/rl2;
+            
+            gain1=1/pthl1;
+            gain2=1/pthl2;
+          % disp(gain1);
+          % disp(gain2);
+            
+            
+
+Txarray = phased.URA(TxArraySize,'ElementSpacing',0.0025);
+Txarray.Element.BackBaffled = true;
+    Txsteervector = phased.SteeringVector('SensorArray',Txarray);
+    c = Txsteervector.PropagationSpeed;
+    TxArrayWeights= Txsteervector(Frequency(1),TxSteeringAngle);
+    figure(1)
+         pattern(Txarray,60e9,-180:180,0,'PropagationSpeed',c,'Weights',TxArrayWeights,...
+        'CoordinateSystem','polar'); 
+Rxarray = phased.URA(RxArraySize,'ElementSpacing',0.0025);
+Rxarray.Element.BackBaffled = true;
+    Rxsteervector = phased.SteeringVector('SensorArray',Rxarray);
+    RxArrayWeights= Rxsteervector(Frequency(1),RxSteeringAngle);
+    figure(2)
+         pattern(Rxarray,60e+9,-180:180,0,'Weights',RxArrayWeights,...
+        'CoordinateSystem','polar'); 
+    
+Intarray = phased.URA(IntArraySize,'ElementSpacing',0.0025);
+Intarray.Element.BackBaffled = true;
+    Intsteervector = phased.SteeringVector('SensorArray',Intarray);
+    c = Intsteervector.PropagationSpeed;
+    IntArrayWeights= Intsteervector(Frequency(1),IntSteeringAngle);
+    figure(3)
+         pattern(Intarray,60e9,-180:180,0,'PropagationSpeed',c,'Weights',IntArrayWeights,...
+        'CoordinateSystem','polar'); 
+
+
+
+
+
+% Create a format configuration object
+cfgDMG = wlanDMGConfig;
+mcs = "9"; % MCS specified as a string scalar or string vector
+cfgDMG.PSDULength = 4096; % PSDULength in bytes
+
+
+
+% Get sampling rate and specify carrier frequency
+fs = wlanSampleRate(cfgDMG);
+fc = 60e9;     
+
+% Create a TGay channel object
+tgayChan = TGayChannel;
+tgayChan.SampleRate                = fs; 
+tgayChan.CarrierFrequency          = fc;
+tgayChan.Environment               = 'Open area hotspot';
+tgayChan.OxygenAbsorption          = 0;
+tgayChan.TransmitArray.Size        = TxArraySize;
+tgayChan.TransmitArrayPosition     = TxArrayPosition;     % Meters
+tgayChan.TransmitArrayOrientation  = [0; 0; 0];   % Degrees
+tgayChan.ReceiveArray.Size         = RxArraySize;
+tgayChan.ReceiveArrayPosition      = RxArrayPosition;   % Meters 
+tgayChan.ReceiveArrayOrientation   = [0; 0; 0];     % Degrees
+tgayChan.BeamformingMethod         = 'User-defined';
+tgayChan.TransmitBeamformingVector = TxArrayWeights;
+tgayChan.ReceiveBeamformingVector =  RxArrayWeights;
+tgayChan.NormalizeImpulseResponses = true;
+
+
+
+tgayChan1 = TGayChannel;
+tgayChan1.SampleRate                = fs; 
+tgayChan1.CarrierFrequency          = fc;
+tgayChan1.Environment               = 'Open area hotspot';
+tgayChan1.OxygenAbsorption           = 0;
+tgayChan1.TransmitArray.Size        = IntArraySize;
+tgayChan1.TransmitArrayPosition     = IntArrayPosition;     % Meters
+tgayChan1.TransmitArrayOrientation  = [0; 0; 0];   % Degrees
+tgayChan1.ReceiveArray.Size         = RxArraySize;
+tgayChan1.ReceiveArrayPosition      = RxArrayPosition;   % Meters 
+tgayChan1.ReceiveArrayOrientation   = [0; 0; 0];     % Degrees
+tgayChan1.BeamformingMethod         = 'User-defined';
+tgayChan1.TransmitBeamformingVector = IntArrayWeights;
+tgayChan1.ReceiveBeamformingVector =  RxArrayWeights;
+tgayChan1.NormalizeImpulseResponses = true;
+
+
+
+tgayChan.showEnvironment;
+tgayChan1.showEnvironment;
+
+
+ppm = 20;                 % Clock accuracy to drive the CFO (ppm)
+freqOffset = ppm*1e-6*fc; % Carrier frequency offset (Hz)
+delay = 500;              % Sample to delay the waveform
+zeroPadding = 100;        % Add trailing zeros to allow for channel delay
+
+
+snrRanges = {-2.0:0.5:0.5, ...  % MCS 1
+             0.0:1.0:5.0, ...   % MCS 2
+             1.0:0.8:5.0, ...   % MCS 3
+             2.0:0.8:6.0, ...   % MCS 4
+             2.5:1.0:7.5, ...   % MCS 5
+             2.5:0.8:6.5, ...   % MCS 6
+             4.0:1.0:9.0, ...   % MCS 7
+             5.0:1.0:10.0,...   % MCS 8
+             6.0:1.0:11.0, ...  % MCS 9
+             7.0:1.2:13.0 ...   % MCS 9.1
+             8.0:1.5:15.5, ...  % MCS 10
+             10.0:2.0:20.0, ... % MCS 11
+             11.0:2.0:21.0, ... % MCS 12
+             12.0:2.0:22.0, ... % MCS 12.1
+             14.0:2.0:24.0, ... % MCS 12.2
+             15.0:2.0:25.0, ... % MCS 12.3
+             17.0:2.0:27.0, ... % MCS 12.4
+             17.0:2.0:27.0, ... % MCS 12.5
+             20.0:2.0:30.0};    % MCS 12.6
+             
+
+
+maxNumErrors = 10;   % The maximum number of packet errors at an SNR point
+maxNumPackets = 100; % Maximum number of packets at an SNR point
+
+
+numSNR = numel(snrRanges{1}); % Number of SNR points
+if ~isstring(mcs)
+    error('MCS must be specified as a string scalar or string vector');
+end
+numMCS = numel(mcs);          % Number of MCS
+packetErrorRate = zeros(numMCS,numSNR);
+Ngi = 64; % Fixed GI length defined in the standard (20.6.3.2.5)
+validMCS = string(sort([1:12 9.1 12.1:0.1:12.6]));
+
+for imcs = 1:numMCS 
+    cfgDMG.MCS = mcs(imcs);
+   % if ~strcmp(phyType(cfgDMG),'SC')
+   %     error('This example only supports DMG SC PHY simulation');
+   % end
+    ind = wlanFieldIndices(cfgDMG);
+    snr = snrRanges{mcs(imcs)==validMCS}; % SNR points to simulate from MCS
+    
+    % parfor isnr = 1:numSNR % Use 'parfor' to speed up the simulation
+    for isnr = 1:numSNR     % Use 'for' to debug the simulation
+        % Set random substream index per iteration to ensure that each
+        % iteration uses a repeatable set of random numbers
+        stream = RandStream('combRecursive','Seed',0);
+        stream.Substream = isnr;
+        RandStream.setGlobalStream(stream);
+        
+        % Create a copy of the TGay channel per SNR point simulated
+        tgayChannel = clone(tgayChan);
+        tgayChannel1 = clone(tgayChan1);
+        
+        
+        % Create an instance of the AWGN channel per SNR point simulated
+        awgnChannel = comm.AWGNChannel;
+        awgnChannel.NoiseMethod = 'Signal to noise ratio (SNR)';
+        awgnChannel.SNR = snr(isnr);
+
+        % Set simulation parameters
+        numPacketErrors = 0;
+        numPkt = 1; % Index of the transmitted packet
+        
+       for ipackets=1:100
+            % Generate a packet waveform
+            psdu = randi([0 1],cfgDMG.PSDULength*8,1);      
+            txWaveform = wlanWaveformGenerator(psdu,cfgDMG);
+            
+            psdu1 = randi([0 1],cfgDMG.PSDULength*8,1);      
+            txWaveform1 = wlanWaveformGenerator(psdu1,cfgDMG);
+            
+            
+
+            % Add delay and trailing zeros
+            tx = [zeros(delay,1); txWaveform; zeros(zeroPadding,1)];
+            tx1 = [zeros(delay,1); txWaveform; zeros(zeroPadding,1)];
+
+            % Tranmsit through a TGay channel. First release the channel
+            % for a different realization
+            tgayChannel.release;
+            tgayChannel1.release;
+            
+            chanOut = tgayChannel(tx);
+            chanOut1 = tgayChannel1(tx1);
+            
+            
+            % Add noise
+            rx0 = awgnChannel(chanOut);
+            rx1 = awgnChannel(chanOut1);
+            
+            rx0=rx0*gain1*oagain1*rlgain1;
+            rx1=rx1*gain2*oagain2*rlgain2;
+            rx =rx0+rx1;
+            
+            % Add CFO
+            rx = helperFrequencyOffset(rx,fs,freqOffset);
+
+            % Packet detection
+            threshold = 0.03; % Good for low SNRs
+            pktStartOffset = dmgPacketDetect(rx,0,threshold);
+            if isempty(pktStartOffset) % If empty no STF detected; packet error
+                numPacketErrors = numPacketErrors+1;
+                numPkt = numPkt+1;
+                continue; % Go to next loop iteration
+            end
+
+            % Frequency offset estimation and correction
+            stf = rx(pktStartOffset+(ind.DMGSTF(1):ind.DMGSTF(2)));
+            fOffsetEst = dmgCFOEstimate(stf);
+            rx = helperFrequencyOffset(rx,fs,-fOffsetEst);
+
+            % Symbol timing and channel estimate
+            preamblefield = rx(pktStartOffset+1:pktStartOffset+ind.DMGHeader(2),:);
+            [symbolTimingOffset,chanEst] = dmgTimingAndChannelEstimate(preamblefield);
+            startOffset = pktStartOffset+symbolTimingOffset;
+
+            % If not enough samples to decode detected data field start,
+            % then assume synchronization error and packet error
+            if (startOffset+ind.DMGData(2))>size(rx,1)
+                numPacketErrors = numPacketErrors+1;
+                numPkt = numPkt+1;
+                continue; % Go to next loop iteration
+            end
+
+            % Noise estimation using the STF as repeating sequence
+            stf = rx(pktStartOffset+(ind.DMGSTF(1):ind.DMGSTF(2)));
+            nVarEst = dmgSTFNoiseEstimate(stf);
+
+            % Extract data field (ignore first GI)
+            rxData = rx(startOffset+((ind.DMGData(1)+Ngi):ind.DMGData(2)));
+
+            % Linear frequency domain equalization
+            rxEqDataBlks = dmgSingleCarrierFDE(rxData,chanEst,nVarEst);
+
+            % Unique word phase tracking
+            rxEqDataBlks = dmgUniqueWordPhaseTracking(rxEqDataBlks);
+
+            % Discard GI from all blocks
+            rxDataSym = rxEqDataBlks(1:end-Ngi,:); 
+
+            % Recover the transmitted PSDU from DMG Data field
+            dataDecode = wlanDMGDataBitRecover(rxDataSym,nVarEst,cfgDMG);
+           
+              if ipackets==1
+                recdata=dataDecode';
+                sendata=[psdu]';
+            else
+                recdata=[recdata [dataDecode]'];
+                sendata=[sendata [psdu]'];
+            end 
+            
+
+            % Determine if any bits are in error, i.e. a packet error
+            packetError = any(biterr(psdu,dataDecode));
+            numPacketErrors = numPacketErrors+packetError;
+            numPkt = numPkt+1;
+       end
+        
+       
+       a=biterr(recdata',sendata');
+      % disp(a);
+       b=size(recdata');
+      % disp(b);
+       c=b(1);
+      % disp(c);
+       BER=a/c;
+      % disp('BER=');
+      % disp(BER);
+        
+        % Calculate packet error rate (PER) at SNR point
+        packetErrorRate(imcs,isnr) = numPacketErrors/(numPkt-1);
+        disp(join(["     MCS:" cfgDMG.MCS ", SNR " ...
+            num2str(snr(isnr)) " completed after " ...
+            num2str(numPkt-1) " packets, PER: " ... 
+            num2str(packetErrorRate(imcs,isnr))],""));
+        biterrorratee(imcs,isnr) = BER;
+        disp(join(["     MCS:" cfgDMG.MCS ", SNR " ...
+            num2str(snr(isnr)) " completed after " ...
+            num2str(numPkt-1) " packets, BER: " ... 
+            num2str( biterrorratee(imcs,isnr))],""));
+    end
+end
+
+%% Plot Packet Error Rate vs SNR Results
+markers = 'ox*sd^v><ph+ox*sd^v';
+color = 'bmcrgbrkymcrgbrkymc';
+figure;
+for imcs = 1:numMCS
+    semilogy(snrRanges{mcs(imcs)==validMCS},packetErrorRate(imcs,:).',['-' markers(imcs) color(imcs)]);
+    hold on;
+end
+grid on;
+xlabel('SNR (dB)');
+ylabel('PER');
+dataStr = arrayfun(@(x)sprintf('MCS %s',x),mcs,'UniformOutput',false);
+legend(dataStr);
+title('PER for DMG PHY, TGay channel');
+
+
+
+markers = 'ox*sd^v><ph+ox*sd^v';
+color = 'bmcrgbrkymcrgbrkymc';
+figure;
+for imcs = 1:numMCS
+    semilogy(snrRanges{mcs(imcs)==validMCS},biterrorratee(imcs,:).',['-' markers(imcs) color(imcs)]);
+    hold on;
+end
+grid on;
+xlabel('SNR (dB)');
+ylabel('BER');
+dataStr = arrayfun(@(x)sprintf('MCS %s',x),mcs,'UniformOutput',false);
+legend(dataStr);
+title('BER for DMG PHY, TGay channel');
+
