@@ -1,0 +1,1515 @@
+classdef (StrictDefaults) TGayChannel2 < matlab.System
+%TGayChannel Filter input signal through a IEEE 802.11ay channel
+%   CHAN = TGayChannel creates a System object, CHAN, for the IEEE 802.11ay
+%   millimeter-wave channel model as specified [1], which follows the
+%   quasi-deterministic (Q-D) modelling approach. This object filters an
+%   input signal through the channel to obtain the channel impaired complex
+%   signal.
+%
+%   CHAN = TGayChannel(Name,Value) creates a 802.11ay channel object,
+%   CHAN, with the specified property Name set to the specified Value.
+%   You can specify additional name-value pair arguments in any order as
+%   (Name1,Value1,...,NameN,ValueN).
+%
+%   Step method syntax:
+%
+%   Y = step(CHAN,X) filters input signal X through a IEEE 802.11ay
+%   millimeter-wave fading channel and returns the result in Y. The input X
+%   must be a double precision, column vector with Ns samples. Y is the
+%   Ns-by-1 channel impaired signal.
+% 
+%   [Y,CIR] = step(CHAN,X) returns the channel impulse response (CIR) for
+%   all the simulated rays. CIR is a complex-valued, Ns-by-Nray matrix,
+%   where Nray is the number of rays.
+%
+%   System objects may be called directly like a function instead of using
+%   the step method. For example, y = step(obj, x) and y = obj(x) are
+%   equivalent.
+% 
+%   TGayChannel methods:
+%
+%   step            - Filter input signal through a 802.11ay channel (see above)
+%   release         - Allow property value and input characteristics changes
+%   clone           - Create 802.11ay channel object with same property values
+%   isLocked        - Locked status (logical)
+%   reset           - Reset channel filter
+%   info            - Return characteristic information about the 802.11ay channel 
+%   showEnvironment - Display a 3D map for the specified environment and D-rays 
+%
+%   TGayChannel properties:
+%
+%   SampleRate                - Input signal sample rate (Hz)
+%   CarrierFrequency          - Carrier frequency (Hz)
+%   Environment               - Large scale environment
+%   RoadWidth                 - Road width of street canyon
+%   SidewalkWidth             - Sidewalk width of street canyon
+%   RoomDimension             - Hotel lobby length, width and height
+%   TransmitArray             - Transmit antenna array specification
+%   TransmitArrayPosition     - Transmit antenna array position
+%   TransmitArrayOrientation  - Transmit antenna array orientation
+%   ReceiveArray              - Receive antenna array specification
+%   ReceiveArrayPosition      - Receive antenna array position
+%   ReceiveArrayOrientation   - Receive antenna array orientation
+%   OxygenAbsorption          - Oxygen absorption (dB/m)
+%   BeamformingMethod         - Beamforming method
+%   TransmitBeamformingVector - Transmit beamforming vector(s)
+%   ReceiveBeamformingVector  - Receive beamforming vector(s)
+%   NormalizeImpulseResponses - Normalize channel impulse responses (logical)
+%   RandomStream              - Source of random number stream
+%   Seed                      - Initial seed of mt19937ar random number stream
+%
+%   % Example: 
+%   %   Filter an 802.11ad single-carrier waveform through a TGay channel. 
+%   %   The seed value is set to produce a repeatable channel output.
+%
+%   cfgDMG = wlanDMGConfig; % Create packet configuration
+%   psdu = randi([0 1], 8*cfgDMG.PSDULength, 1);      
+%   txWaveform = wlanWaveformGenerator(psdu, cfgDMG);
+%   tgay = TGayChannel( ...
+%       'RandomStream', 'mt19937ar with seed', ...
+%       'Seed', 100);
+%   chanOut = tgay(txWaveform);   
+%
+%   % References:
+%   % [1] A. Maltsev and et. al, Channel Models for IEEE 802.11ay, 
+%   % IEEE 802.11-15/1150r9, Mar. 2017.
+%   % [2] A. Maltsev and et. al, Channel Models for 60GHz WLAN Systems, 
+%   % IEEE 802.11-09/0334r8, May 2010.
+%   % [3] 3GPP TR 38.901, Study on channel model for frequencies from 0.5
+%   % to 100 GHz, v14.3.0, Dec. 2017. 
+% 
+%   See also wlanTGnChannel, wlanTGacChannel, wlanTGahChannel, wlanTGaxChannel.
+
+properties (Nontunable)
+    %SampleRate Sample rate (Hz)
+    %   Specify the sample rate of the input signal in Hz as a double
+    %   precision, real, positive scalar. The default value of this
+    %   property 2.64e9 Hz.
+    SampleRate = 2.64e9;
+    %CarrierFrequency Carrier frequency (Hz) 
+    %   Specify the center frequency of the input signal in Hz as a double
+    %   precision, real, positive scalar. The default value of this
+    %   property 60e9 Hz.
+    CarrierFrequency = 60e9;
+    %Environment Channel model environment
+    %   Specify the channel model environment as defined in [1] as one of
+    %   'Open area hotspot' | 'Street canyon hotspot' | 'Large hotel
+    %   lobby'. The default value of this property is 'Open area hotspot'.
+    Environment = 'Open area hotspot'
+    %RoadWidth Road width of street canyon
+    %   Specify the road width in meters as a double precision, real,
+    %   positive scalar. The road is parallel to and has its center on the
+    %   y-axis. This property applies when you set the Environment property
+    %   to 'Street canyon hotspot'. The default value of this property 16m.
+    RoadWidth = 16; 
+    %SidewalkWidth Sidewalk width of street canyon
+    %   Specify the sidewalk width in meters as a double precision, real,
+    %   positive scalar. The road is parallel to and has its center on the
+    %   y-axis. This property applies when you set the Environment property
+    %   to 'Street canyon hotspot'. The default value of this property 6m.    
+    SidewalkWidth = 6;
+    %RoomDimension Room length, width and height of large hotel lobby
+    %   Specify the length, width and height of the room as a double
+    %   precision, real, positive, 1-by-3 vector. The room has one ground
+    %   corner at the coordinate origin and its length, width and height
+    %   are along the positive x-axis, y-axis and z-axis respectively. This
+    %   property applies when you set the Environment property to 'Large
+    %   hotel lobby'. The default value of this property [20, 15, 6].
+    RoomDimension = [20 15 6];
+    %TransmitArray Transmit antenna array    
+    %   Specify the transmit antenna array as a <a href="matlab:help('TGayURAConfig')">TGayURAConfig</a>
+    %   object. The default value of this property is a 2x2 uniform
+    %   rectangular array.
+    TransmitArray = TGayURAConfig;
+    %TransmitArrayPosition Transmit antenna array position
+    %   Specify the position in meters of the transmit antenna array's
+    %   phase center as a double precision, real, 3-by-1 vector in the form
+    %   of [x; y; z]. The default value of this property is [0; 0; 6].
+    TransmitArrayPosition = [0;0;6]
+    %TransmitArrayOrientation Transmit antenna array orientation
+    %   Specify the orientation of the local coordinate system for the
+    %   transmit antenna array in degrees as a double precision, real,
+    %   3-by-1 vector in the form of [bearing; downtilt; slant]. The
+    %   default value of this property is [0; 0; 0].
+    TransmitArrayOrientation = zeros(3,1)
+    %ReceiveArray Receive antenna array
+    %   Specify the receive antenna array as a <a href="matlab:help('TGayURAConfig')">TGayURAConfig</a>
+    %   object. The default value of this property is a 2x2 uniform
+    %   rectangular array.
+    ReceiveArray = TGayURAConfig;
+    %ReceiveArrayPosition Receive antenna array position
+    %   Specify the position in meters of the receive antenna array's phase
+    %   center as a double precision, real, 3-by-1 vector in the form of
+    %   [x; y; z]. The default value of this property is [50; 0; 1.5].
+    ReceiveArrayPosition = [10;0;1.5]
+    %ReceiveArrayOrientation Receive antenna array orientation
+    %   Specify the orientation of the local coordinate system for the
+    %   receive antenna array in degrees as a double precision, real,
+    %   3-by-1 vector in the form of [bearing; downtilt; slant]. The
+    %   default value of this property is [0; 0; 0].
+    ReceiveArrayOrientation = zeros(3,1)
+    %OxygenAbsorption Oxygen absorption (dB/m)
+    %   Specify the oxygen absorption in dB/m as a double-precision, real,
+    %   non-negative scalar. The default value of this property is 0.015
+    %   dB/m, which is typical for 60 GHz carrier frequency.
+    OxygenAbsorption = 0.015 
+    %BeamformingMethod Beamforming method
+    %   Specify the beamforming method as one of 'Maximum power ray' |
+    %   'User-defined'. The default value of this property is 'Maximum
+    %   power ray'.
+    BeamformingMethod = 'Maximum power ray'
+    %TransmitBeamformingVector Transmit beamforming vector
+    %   Specify the transmit beamforming vector as a double precision,
+    %   column vector of length NTE. NTE is the number of elements in the
+    %   transmit antenna array. This property applies when you set the
+    %   BeamformingMethod property to 'User-defined'. The default value of
+    %   this property is [0.5; 0.5; 0.5; 0.5].
+    TransmitBeamformingVector = .5*ones(4,1)
+    %ReceiveBeamformingVector Receive beamforming vector
+    %   Specify the receive beamforming vector as a double precision,
+    %   column vector of length NRE. NRE is the number of elements in the
+    %   receive antenna array. This property applies when you set the
+    %   BeamformingMethod property to 'User-defined'. The default value of
+    %   this property is [0.5; 0.5; 0.5; 0.5].
+    ReceiveBeamformingVector = .5*ones(4,1)
+    model=1;
+end
+
+properties (Nontunable, Logical)    
+    %NormalizeImpulseResponses Normalize channel impulse responses
+    %   Set this property to true to normalize the channel impulse
+    %   responses (CIR). The default value of this property is true.
+    NormalizeImpulseResponses = true
+end
+
+properties (Nontunable)
+    %RandomStream Random number source
+    %   Specify the source of random number stream as one of 'Global
+    %   stream' | 'mt19937ar with seed'. If RandomStream is set to 'Global
+    %   stream', the current global random number stream is used for random
+    %   number generation. If RandomStream is set to 'mt19937ar with seed',
+    %   the mt19937ar algorithm is used for random number generation. The
+    %   default value of this property is 'Global stream'.
+    RandomStream = 'Global stream';  
+    %Seed Initial seed
+    %   Specify the initial seed of a mt19937ar random number generator
+    %   algorithm as a double precision, real, nonnegative integer scalar.
+    %   This property applies when you set the RandomStream property to
+    %   'mt19937ar with seed'. The default value of this property is 73.
+    Seed = 73;
+end
+
+properties(Constant, Hidden)
+    EnvironmentSet = matlab.system.StringSet({'Open area hotspot', 'Street canyon hotspot', 'Large hotel lobby'});
+    BeamformingMethodSet = matlab.system.StringSet({'Maximum power ray', 'User-defined'});
+    RandomStreamSet = matlab.system.StringSet({'Global stream', 'mt19937ar with seed'});
+    % Refer to Table 2-3, 2-4, 2-5 in [1]
+    MaterialLibrary = [ ...
+        struct('Material',             'Asphalt', ...   % Ground for open area 
+               'RelativePermittivity', 4+0.2j, ...
+               'Roughness',            3e-4), ...
+        struct('Material',             'Asphalt', ...   % Road and sidewalk for street canyon
+               'RelativePermittivity', 4+0.2j, ...
+               'Roughness',            2e-4), ...
+        struct('Material',             'Concrete', ...  % Wall for street canyon
+               'RelativePermittivity', 6.25+0.3j, ...
+               'Roughness',            5e-4), ...
+        struct('Material',             'Concrete', ...  % Floor for hotel lobby
+               'RelativePermittivity', 4+0.2j, ...
+               'Roughness',            1e-4), ...
+        struct('Material',             'Concrete', ...  % Wall for hotel lobby
+               'RelativePermittivity', 4+0.2j, ...
+               'Roughness',            2e-4), ...
+        struct('Material',             'Concrete', ...  % Ceiling for hotel lobby
+               'RelativePermittivity', 6.25+0.3j, ...
+               'Roughness',            2e-4)];
+end
+
+properties (Access = private) 
+    pNumSampProcessed
+    pRNGStream
+    pEnvFig
+end
+
+properties (Access = private) % For Rays
+    pDRays
+    pRRays
+    pDiffuseRays
+    pAllRays
+    pNumRays
+end
+
+properties (Access = private) % For CIR 
+    pStaticCIR
+    pDopplerShift
+end
+
+properties (Access = private) % For channel filter 
+    pHasChannelFilter  
+    pIsPathOnSampleTime
+    pPathIntegerDelays
+    pTapDelays
+    pNumChannelTaps
+    pChannelIntegerDelay
+    pChannelFilterDelay
+    pInterpMatrix
+    pChannelFilterState
+end
+
+properties(Constant, Access = private)
+    % Fractional delay FIR filter length
+    pChannelFilterLength = 16
+    % Channel filter frac delay tolerance
+    pFracDelayTolerance = 0.01
+    % Only SU-SISO is supported for now
+    NumTxStreams = 1
+    NumRxStreams = 1
+end
+
+methods
+  function obj = TGayChannel(varargin)
+    setProperties(obj, nargin, varargin{:});
+  end
+  
+  function set.SampleRate(obj, Rs)
+    propName = 'SampleRate';
+    validateattributes(Rs, {'double'}, ...
+        {'real','scalar','positive','finite'}, ...
+        [class(obj) '.' propName], propName); 
+
+    obj.SampleRate = Rs;    
+  end
+    
+  function set.CarrierFrequency(obj, fc)
+    propName = 'CarrierFrequency';
+    validateattributes(fc, {'double'}, ...
+        {'real','scalar','positive','finite'}, ...
+        [class(obj) '.' propName], propName); 
+
+    obj.CarrierFrequency = fc;    
+  end
+    
+  function set.RoadWidth(obj, rw)
+    propName = 'RoadWidth';
+    validateattributes(rw, {'double'}, ...
+        {'real','scalar','positive','finite'}, ...
+        [class(obj) '.' propName], propName); 
+
+    obj.RoadWidth = rw;
+  end
+  
+  function set.SidewalkWidth(obj, sww)
+    propName = 'SidewalkWidth';
+    validateattributes(sww, {'double'}, ...
+        {'real','scalar','positive','finite'}, ...
+        [class(obj) '.' propName], propName); 
+
+    obj.SidewalkWidth = sww;
+  end
+  
+  function set.RoomDimension(obj, rd)
+    propName = 'RoomDimension';
+    validateattributes(rd, {'double'}, ...
+        {'real','positive','finite','size',[1 3]}, ...
+        [class(obj) '.' propName], propName); 
+
+    obj.RoomDimension = rd;
+  end
+  
+  function set.TransmitArray(obj, txArray)
+    propName = 'TransmitArray';
+    validateattributes(txArray, {'TGayURAConfig'}, ...
+        {'scalar'}, [class(obj) '.' propName], propName); 
+
+    obj.TransmitArray = txArray;      
+  end
+  
+  function set.TransmitArrayPosition(obj, txPos)
+    propName = 'TransmitArrayPosition';
+    validateattributes(txPos, {'double'}, ...
+        {'real','finite','size',[3 1]}, ...
+        [class(obj) '.' propName], propName);
+
+    obj.TransmitArrayPosition = txPos;
+  end
+  
+  function set.TransmitArrayOrientation(obj, txOri)
+    propName = 'TransmitArrayOrientation';
+    validateattributes(txOri, {'double'}, ...
+        {'real','finite','size',[3 1]}, ...
+        [class(obj) '.' propName], propName);
+    
+    obj.TransmitArrayOrientation = txOri;       
+  end
+  
+  function set.ReceiveArray(obj, rxArray)
+    propName = 'ReceiveArray';
+    validateattributes(rxArray, {'TGayURAConfig'}, ...
+        {'scalar'}, [class(obj) '.' propName], propName); 
+
+    obj.ReceiveArray = rxArray;      
+  end
+  
+  function set.ReceiveArrayPosition(obj, rxPos)
+    propName = 'ReceiveArrayPosition';
+    validateattributes(rxPos, {'double'}, ...
+        {'real','finite','size',[3 1]}, ...
+        [class(obj) '.' propName], propName);
+    
+    obj.ReceiveArrayPosition = rxPos;      
+  end
+  
+  function set.ReceiveArrayOrientation(obj, rxOri)
+    propName = 'ReceiveArrayOrientation';
+    validateattributes(rxOri, {'double'}, ...
+        {'real','finite','size',[3 1]}, ...
+        [class(obj) '.' propName], propName);
+    
+    obj.ReceiveArrayOrientation = rxOri;       
+  end
+  
+  function set.OxygenAbsorption(obj, oa)
+    propName = 'OxygenAbsorption';
+    validateattributes(oa, {'double'}, ...
+        {'real','finite','nonnegative','scalar'}, ...
+        [class(obj) '.' propName], propName);
+    
+    obj.OxygenAbsorption = oa;       
+  end
+  
+  function set.TransmitBeamformingVector(obj, txBF)
+    propName = 'TransmitBeamformingVector';
+    validateattributes(txBF, {'double'}, {'finite','column'}, ...
+        [class(obj) '.' propName], propName);
+    
+    obj.TransmitBeamformingVector = txBF;
+  end
+  
+  function set.ReceiveBeamformingVector(obj, rxBF)
+    propName = 'ReceiveBeamformingVector';
+    validateattributes(rxBF, {'double'}, {'finite','column'}, ...
+        [class(obj) '.' propName], propName);
+    
+    obj.ReceiveBeamformingVector = rxBF;       
+  end
+  
+  function set.Seed(obj, seed)
+    propName = 'Seed';
+    validateattributes(seed, {'double'}, ...
+        {'real','scalar','integer','nonnegative','finite'}, ...
+        [class(obj) '.' propName], propName); 
+
+    obj.Seed = seed;
+  end
+  
+  function showEnvironment(obj, varargin)
+    %SHOWENVIRONMENT Display specified environment with antenna arrays and D-Rays
+    %   showEnvironment(CHAN) shows a 3-D plot for the specified
+    %   environment and the transmit and receive antenna arrays therein,
+    %   based on the configuration of the TGayChannel object, CHAN.
+    %   Ray-tracing is performed and D-Rays are also shown from transmit to
+    %   receive array.
+    % 
+    %   showEnvironment(CHAN, RAYTRACING) optionally turns off ray-tracing.
+    %   No D-Ray is shown. RAYTRACING is a logical variable and defaults to
+    %   true if not specified.
+    
+    narginchk(1,2);
+    
+    if nargin == 2
+        validateattributes(varargin{1}, {'logical'}, {'scalar'}, ...
+            [class(obj) '.showEnvironment' ], 'the ray-tracing input');
+        showDRay = varargin{1};
+    else
+        showDRay = true;
+    end
+    
+    txPos = obj.TransmitArrayPosition;
+    rxPos = obj.ReceiveArrayPosition;    
+    
+    if isempty(obj.pEnvFig) || ~isvalid(obj.pEnvFig)
+        obj.pEnvFig = figure('Tag', [class(obj), 'Environment']);
+    else        
+        set(0,'CurrentFigure',obj.pEnvFig);
+        clf(obj.pEnvFig);
+    end
+
+    % Configure figure
+    hold on; 
+    xlabel('x'); ylabel('y'); zlabel('z');    
+    if showDRay 
+        titleStr = [obj.Environment, ' with antenna arrays and D-Rays'];
+    else
+        titleStr = [obj.Environment, ' with antenna arrays'];
+    end
+    title(titleStr, 'Tag', [class(obj), 'EnvironmentTitle']);
+    view(10, 10);
+
+    % Draw environment
+    grdColor = [0.5263 0.5263 0.5263]; % Ground color
+    wallColor = [204 51 0]/256; % Wall color
+    facets = getGeometry(obj);    
+    
+    if strcmp(obj.Environment, 'Open area hotspot')
+        % Draw the ground
+        patch(facets(1,:), facets(2,:), facets(3,:), grdColor, ...
+            'Tag', [class(obj), 'OpenAreaGround']);
+        zlim([0, max(txPos(3), rxPos(3)) * 1.2]);
+    elseif strcmp(obj.Environment, 'Street canyon hotspot')
+        sidewalkColor = [0.8947 0.8947 0.8947];
+        % Limit view between the walls
+        xlim([-obj.RoadWidth/2-obj.SidewalkWidth obj.RoadWidth/2+obj.SidewalkWidth]);
+        zlim([0, max(txPos(3), rxPos(3)) * 1.2]);
+        
+        % Draw the road
+        patch(facets(1,:,1), facets(2,:,1), facets(3,:,1), grdColor, ...
+            'Tag', [class(obj), 'StreetCanyonGround']);
+        % Draw the sidewalks
+        patch(facets(1,:,2), facets(2,:,2), facets(3,:,2), sidewalkColor, ...
+            'Tag', [class(obj), 'StreetCanyonSidewalk1']);
+        patch(facets(1,:,3), facets(2,:,3), facets(3,:,3), sidewalkColor, ...
+            'Tag', [class(obj), 'StreetCanyonSidewalk2']);
+        % Draw the walls
+        patch(facets(1,:,4), facets(2,:,4), facets(3,:,4), wallColor, ...
+            'FaceAlpha', .8, 'Tag', [class(obj), 'StreetCanyonWall1']);
+        patch(facets(1,:,5), facets(2,:,5), facets(3,:,5), wallColor, ...
+            'FaceAlpha', .8, 'Tag', [class(obj), 'StreetCanyonWall2']);
+    else % Large hotel lobby
+        ceilingColor = [1 1 1];
+        xlim([0 obj.RoomDimension(1)]);
+        ylim([0 obj.RoomDimension(2)]);
+        zlim([0 obj.RoomDimension(3)]);
+        
+        % Draw the ground
+        patch(facets(1,:,1), facets(2,:,1), facets(3,:,1), grdColor, ...
+            'Tag', [class(obj), 'HotelLobbyGround']);
+        % Draw the walls
+        patch(facets(1,:,2), facets(2,:,2), facets(3,:,2), wallColor, ...
+            'FaceAlpha', .5, 'Tag', [class(obj), 'HotelLobbyWall1']);
+        patch(facets(1,:,3), facets(2,:,3), facets(3,:,3), wallColor, ...
+            'FaceAlpha', .5, 'Tag', [class(obj), 'HotelLobbyWall2']);
+        patch(facets(1,:,4), facets(2,:,4), facets(3,:,4), wallColor, ...
+            'FaceAlpha', .5, 'Tag', [class(obj), 'HotelLobbyWall3']);
+        patch(facets(1,:,5), facets(2,:,5), facets(3,:,5), wallColor, ...
+            'FaceAlpha', .5, 'Tag', [class(obj), 'HotelLobbyWall4']);
+        % Draw the ceiling
+        patch(facets(1,:,6), facets(2,:,6), facets(3,:,6), ceilingColor, ...
+            'FaceAlpha', .5, 'Tag', [class(obj), 'HotelLobbyCeil']);
+    end
+    
+    % Skip plotting Tx & Rx if their element positions are invalid
+    try
+        validateArrayPositions(obj);
+    catch
+        coder.internal.warning('wlan:TGayChannel:InvalidTxOrRxPos')
+        return;
+    end
+    
+    % Draw Tx array(s)
+    plotArray(obj, 'Tx', 'cyan');
+
+    % Draw Rx array(s)
+    plotArray(obj, 'Rx', 'green');
+
+    % Show D-rays as required
+    if showDRay
+        plot(performRaytracing(obj));
+    end
+  end
+end
+
+methods(Access = protected)         
+  function validatePropertiesImpl(obj)
+    % Check Tx/Rx array element positions are within specified environment
+    validateArrayPositions(obj);
+    
+    % Validate Tx and Rx beamforming vector length
+    coder.internal.errorIf(strcmp(obj.BeamformingMethod, 'User-defined') && ...
+        (length(obj.TransmitBeamformingVector) ~= obj.TransmitArray.getNumElements), ...
+        'wlan:TGayChannel:BFArrayMismatch', 'transmit');
+    
+    coder.internal.errorIf(strcmp(obj.BeamformingMethod, 'User-defined') && ...
+        (length(obj.ReceiveBeamformingVector) ~= obj.ReceiveArray.getNumElements), ...
+        'wlan:TGayChannel:BFArrayMismatch', 'receive');
+    
+    % Tx/Rx polarization is not supported yet
+    coder.internal.errorIf(...
+        ~strcmp(obj.TransmitArray.Polarization, 'Off') || ...
+        ~strcmp(obj.ReceiveArray.Polarization, 'Off'), ...        
+        'wlan:TGayChannel:PolNotSupported');
+  end
+  
+  function validateInputsImpl(obj, x)
+    validateattributes(x, {'double'}, {'column','finite'}, ...
+        class(obj), 'the signal input');     
+  end
+  
+  function setupImpl(obj)
+    % Perform ray-tracing to figure out D-Rays
+    obj.pDRays = performRaytracing(obj);
+            
+    % Calculate D-Ray power
+    calcDRayPower(obj,obj.model); 
+
+    % Set up RNG
+    setupRNG(obj);
+
+    % Generate R-Rays and diffuse Rays. Sort all rays according to ToA.
+    generateAllRays(obj);
+    
+    % Calculate CIR with beamforming applied
+    calcCIRWithBF(obj);
+        
+    % Calculate Doppler shift for each ray after randomly generating Rx velocity
+    generateDopplerShifts(obj);
+
+    % Channel filter setup
+    %  1). Get delays referring to the LOS ray
+    delays = [obj.pAllRays.TimeOfArrival] - obj.pAllRays(1).TimeOfArrival;
+    %  2). Set up channel filter
+    setupChannelFilter(obj, delays);
+    %  3). Initialize channel filter state
+    initChannelFilter(obj);
+  end
+   
+  function resetImpl(obj)    
+    % Reset RNG
+    resetRNG(obj);
+    
+    % Reset channel filter state
+    resetChannelFilter(obj);
+    
+    % Reset number of samples processed
+    obj.pNumSampProcessed = 0; 
+  end
+  
+  function [y, g] = stepImpl(obj, x)
+    % Ns is the number of input samples, NP is the number of paths, i.e.,
+    % number of rays, NTS and NRS is the number of input and output streams
+    % respectively. In this version, only SU-SISO, i.e., NTS = NRS = 1 is
+    % considered.
+    
+    Ns = size(x, 1);
+    CIR = obj.pStaticCIR; % [1, NP, NTS, NRS] with NTS = NRS = 1
+    fd = obj.pDopplerShift;
+    
+    % Apply doppler shift for each ray to formuate 4-D CIR array
+    duration = (obj.pNumSampProcessed + (0:(Ns-1))') / obj.SampleRate;
+    phaseShift = exp(-1i * 2 * pi * duration .* fd); % [Ns, NP];
+    g = phaseShift .* CIR; % [Ns, NP, NTS, NRS] with NTS = NRS = 1
+    z = permute(g, [1 4 3 2]); % [Ns, NRS, NTS, NP] with NTS = NRS = 1;
+                                 
+    % Perform channel filtering
+    y = performChanFilter(obj, x, z);
+
+    % Update number of samples processed
+    obj.pNumSampProcessed = obj.pNumSampProcessed + Ns;
+  end
+  
+  function releaseImpl(obj)
+    % Release dsp.Delay object
+    if any(obj.pPathIntegerDelays > 0) 
+        release(obj.pChannelIntegerDelay); 
+    end      
+  end
+  
+  function flag = isInactivePropertyImpl(obj, prop) 
+    if any(strcmp(prop, {'RoadWidth', 'SidewalkWidth'}))
+        flag = ~strcmp(obj.Environment, 'Street canyon hotspot');
+    elseif strcmp(prop, 'RoomDimension') 
+        flag = ~strcmp(obj.Environment, 'Large hotel lobby'); 
+    elseif any(strcmp(prop, {'TransmitBeamformingVector', 'ReceiveBeamformingVector'}))
+        flag = strcmp(obj.BeamformingMethod, 'Maximum power ray');
+    elseif strcmp(prop, 'Seed')
+        flag = strcmp(obj.RandomStream, 'Global stream');
+    else
+        flag = false;
+    end
+  end
+  
+  function s = infoImpl(obj)
+    %info Returns characteristic information about the channel
+    %   S = info(OBJ) returns a structure containing characteristic
+    %   information, S, about the TGay channel. A description of the
+    %   fields and their values is as follows:
+    % 
+    %   NumTxElements       - Number of elements in the transmit array
+    %   NumRxElements       - Number of elements in the receive array
+    %   ChannelFilterDelay  - Channel filter delay (samples)
+    %   NumSamplesProcessed - Number of samples the channel has processed 
+    %                         since the last reset
+      
+    s.NumTxElements = obj.TransmitArray.getNumElements;
+    s.NumRxElements = obj.ReceiveArray.getNumElements;
+    if ~isempty(obj.pChannelFilterDelay)
+        s.ChannelFilterDelay = obj.pChannelFilterDelay;
+    end
+    s.NumSamplesProcessed = obj.pNumSampProcessed;
+  end  
+  
+  function s = saveObjectImpl(obj)
+    s = saveObjectImpl@matlab.System(obj);
+    if isLocked(obj)
+        s.pNumSampProcessed = obj.pNumSampProcessed;
+        s.pRNGStream = obj.pRNGStream;
+        s.pEnvFig = obj.pEnvFig;
+        s.pDRays = obj.pDRays;
+        s.pRRays = obj.pRRays;
+        s.pDiffuseRays = obj.pDiffuseRays;
+        s.pAllRays = obj.pAllRays;
+        s.pNumRays = obj.pNumRays;
+        s.pStaticCIR = obj.pStaticCIR;
+        s.pDopplerShift = obj.pDopplerShift;
+        s.pHasChannelFilter = obj.pHasChannelFilter;
+        s.pIsPathOnSampleTime = obj.pIsPathOnSampleTime;
+        s.pPathIntegerDelays = obj.pPathIntegerDelays;
+        s.pTapDelays = obj.pTapDelays;
+        s.pNumChannelTaps = obj.pNumChannelTaps;
+        s.pChannelIntegerDelay = obj.pChannelIntegerDelay;
+        s.pInterpMatrix = obj.pInterpMatrix;
+        s.pChannelFilterState = obj.pChannelFilterState;
+        if any(obj.pPathIntegerDelays > 0) 
+            s.pChannelIntegerDelay = ...
+                matlab.System.saveObject(obj.pChannelIntegerDelay);
+        end
+    end
+  end  
+  
+  function loadObjectImpl(obj, s, wasLocked)
+    if wasLocked
+        obj.pNumSampProcessed = s.pNumSampProcessed;
+        obj.pRNGStream = s.pRNGStream;
+        obj.pEnvFig = s.pEnvFig;
+        obj.pDRays = s.pDRays;
+        obj.pRRays = s.pRRays;
+        obj.pDiffuseRays = s.pDiffuseRays;
+        obj.pAllRays = s.pAllRays;
+        obj.pNumRays = s.pNumRays;
+        obj.pStaticCIR = s.pStaticCIR;
+        obj.pDopplerShift = s.pDopplerShift;
+        obj.pHasChannelFilter = s.pHasChannelFilter;
+        obj.pIsPathOnSampleTime = s.pIsPathOnSampleTime;
+        obj.pPathIntegerDelays = s.pPathIntegerDelays;
+        obj.pTapDelays = s.pTapDelays;
+        obj.pNumChannelTaps = s.pNumChannelTaps;
+        obj.pChannelIntegerDelay = s.pChannelIntegerDelay;
+        obj.pInterpMatrix = s.pInterpMatrix;
+        obj.pChannelFilterState = s.pChannelFilterState;
+        if any(obj.pPathIntegerDelays > 0) 
+            obj.pChannelIntegerDelay = ...
+                matlab.System.loadObject(s.pChannelIntegerDelay);
+        end
+    end
+    loadObjectImpl@matlab.System(obj, s);
+  end  
+end
+
+methods (Access = private)  
+  function validateArrayPositions(obj)
+    txPos = obj.TransmitArrayPosition;
+    rxPos = obj.ReceiveArrayPosition;
+    
+    % Check Tx and Rx separation must be >= 10 times wavelength. Ideally we
+    % want to check Rx is in the far-field zone of Tx.
+    lambda = physconst('lightspeed')/obj.CarrierFrequency; % wavelength
+    coder.internal.errorIf(sqrt(sum((txPos - rxPos).^2)) < 10*lambda, ...
+        'wlan:TGayChannel:InvalidTxRxSeparation');    
+    
+    % Get element [x;y;z] positions in global coordinate system (GCS)
+    ePosTx = convertPosLCStoGCS(obj.TransmitArray.getElementPosition, ...
+        obj.TransmitArrayOrientation, txPos);
+    ePosRx = convertPosLCStoGCS(obj.ReceiveArray.getElementPosition, ...
+        obj.ReceiveArrayOrientation, rxPos);
+    
+    % Check all elements must be above ground for all scenarios. And this
+    % is all we need to check for the open area scenario.
+    coder.internal.errorIf(any(ePosTx(3,:) <= 0), ...
+        'wlan:TGayChannel:ElementBelowGround', 'transmit');    
+    coder.internal.errorIf(any(ePosRx(3,:) <= 0), ...
+        'wlan:TGayChannel:ElementBelowGround', 'receive');    
+    
+    if strcmp(obj.Environment, 'Street canyon hotspot')
+        rw = obj.RoadWidth;
+        sww = obj.SidewalkWidth;
+        
+        % All elements of Tx must be between the two walls
+        coder.internal.errorIf( ...
+            any(ePosTx(1,:) <= -(rw/2 + sww)) || ...
+            any(ePosTx(1,:) >=  (rw/2 + sww)), ...
+            'wlan:TGayChannel:ElementBeyondWall', 'transmit');
+        
+        % All elements of Rx must be between the two walls
+        coder.internal.errorIf( ...
+            any(ePosRx(1,:) <= -(rw/2 + sww)) || ...
+            any(ePosRx(1,:) >=  (rw/2 + sww)), ...
+            'wlan:TGayChannel:ElementBeyondWall', 'receive');
+        
+        % Rx position must be within a sidewalk
+        coder.internal.errorIf( ...
+            (rxPos(1) > -rw/2) && (rxPos(1) < rw/2), ...
+            'wlan:TGayChannel:RxOnRoad');
+    elseif strcmp(obj.Environment, 'Large hotel lobby')
+        % x, y, z must be within the room for Tx
+        coder.internal.errorIf( ...
+            any(ePosTx(1,:) <= 0) || ...
+            any(ePosTx(1,:) >= obj.RoomDimension(1)) || ...
+            any(ePosTx(2,:) <= 0) || ...
+            any(ePosTx(2,:) >= obj.RoomDimension(2)) || ...
+            any(ePosTx(3,:) >= obj.RoomDimension(3)), ...
+            'wlan:TGayChannel:ElementOutsideLobby', 'transmit');
+        % x, y, z must be within the room for Rx
+        coder.internal.errorIf( ...
+            any(ePosRx(1,:) <= 0) || ...
+            any(ePosRx(1,:) >= obj.RoomDimension(1)) || ...
+            any(ePosRx(2,:) <= 0) || ...
+            any(ePosRx(2,:) >= obj.RoomDimension(2)) || ...
+            any(ePosRx(3,:) >= obj.RoomDimension(3)), ...
+            'wlan:TGayChannel:ElementOutsideLobby', 'receive');
+    end
+  end
+  
+  function [facets, TR, mtlIdx] = getGeometry(obj)
+    txPos = obj.TransmitArrayPosition;
+    rxPos = obj.ReceiveArrayPosition;
+    
+    switch obj.Environment
+      case 'Open area hotspot'
+        % Derive vertex points
+        txRxPos = [txPos(1,:), rxPos(1,:)];
+        xRange = [min(txRxPos), max(txRxPos)];
+        extraEdge = max(diff(xRange) * .2, 10);
+        X = [xRange(1) - extraEdge, xRange(2) + extraEdge];
+        txRxPos = [txPos(2,:), rxPos(2,:)];
+        yRange = [min(txRxPos), max(txRxPos)];
+        extraEdge = max(diff(yRange) * .2, 10);
+        Y = [yRange(1) - extraEdge, yRange(2) + extraEdge];
+        
+        % Get ground dimension
+        facets = [X(1),X(1),X(2),X(2); Y(1),Y(2),Y(2),Y(1); zeros(1, 4)];
+        
+        % Construct a triangulation object for the ground
+        TRI = [4 3 2; 2 1 4];
+        TR = triangulation(TRI, facets'); 
+        
+        % Material indices
+        mtlIdx = [1; 1]; % 1 for ground
+      case 'Street canyon hotspot'
+        % Derive vertex points 
+        Xrd = [-obj.RoadWidth/2, obj.RoadWidth/2];     % X range for road
+        X = [-obj.RoadWidth/2 - obj.SidewalkWidth, ... % X range including 
+              obj.RoadWidth/2 + obj.SidewalkWidth];    % sidewalk
+        txRxPos = [txPos(2,:), rxPos(2,:)];
+        yRange = [min(txRxPos), max(txRxPos)];
+        extraEdge = max(diff(yRange) * .2, 10);
+        Y = [yRange(1) - extraEdge, yRange(2) + extraEdge];
+        Z = [0, max([txPos(3,:), rxPos(3,:)])*1.2];
+        
+        pts = [X(1),   Y(1), Z(1); ...
+               X(2),   Y(1), Z(1); ...
+               X(2),   Y(2), Z(1); ...
+               X(1),   Y(2), Z(1); ...
+               X(1),   Y(1), Z(2); ...
+               X(2),   Y(1), Z(2); ...
+               X(2),   Y(2), Z(2); ...
+               X(1),   Y(2), Z(2); ...
+               Xrd(1), Y(1), Z(1); ...
+               Xrd(2), Y(1), Z(1); ...
+               Xrd(2), Y(2), Z(1); ...
+               Xrd(1), Y(2), Z(1)];
+                       
+        facets = zeros(3, 4, 5);
+        % Get road dimension
+        facets(:,:,1) = pts(9:12,:)'; 
+        
+        % Get sidewalk 1 dimension
+        facets(:,:,2) = pts([1 9 12 4], :)';
+        
+        % Get sidewalk 2 dimension
+        facets(:,:,3) = pts([10 2 3 11], :)';
+        
+        % Get wall 1 dimension
+        facets(:,:,4) = pts([1 4 8 5], :)';
+        
+        % Get wall 2 dimension
+        facets(:,:,5) = pts([2 3 7 6], :)';        
+        
+        % Construct a triangulation object
+        TRI = [4 1 2; 2 3 4; ... % Ground
+               4 8 5; 5 1 4; ... % Left wall
+               6 7 3; 3 2 6];    % Right wall
+        TR = triangulation(TRI, pts(1:8,:)); 
+        
+        % Material indices
+        mtlIdx = [2; 2; ...    % 1 for road and sidewalk
+                  3; 3; 3; 3]; % 3 for wall
+      otherwise % Large Hotel Lobby        
+        % Derive vertex points 
+        X = [0 obj.RoomDimension(1)];
+        Y = [0 obj.RoomDimension(2)];
+        Z = [0 obj.RoomDimension(3)];
+        
+        pts = [X(1), Y(1), Z(1); 
+               X(2), Y(1), Z(1); 
+               X(2), Y(2), Z(1); 
+               X(1), Y(2), Z(1); 
+               X(1), Y(1), Z(2); 
+               X(2), Y(1), Z(2); 
+               X(2), Y(2), Z(2); 
+               X(1), Y(2), Z(2)]; 
+        
+        facets = zeros(3, 4, 6);
+        % Get road dimension
+        facets(:,:,1) = pts(1:4,:)'; 
+        
+        % Get walls dimension
+        facets(:,:,2) = pts([1 2 6 5], :)';
+        facets(:,:,3) = pts([2 3 7 6], :)';
+        facets(:,:,4) = pts([3 4 8 7], :)';
+        facets(:,:,5) = pts([4 1 5 8], :)';
+        
+        % Get ceiling dimension
+        facets(:,:,6) = pts(5:8, :)';        
+
+        % Construct a triangulation object
+        TRI = [ ...
+            4 1 2; 2 3 4; ... % Ground
+            1 4 8; 8 5 1; ... % Left wall
+            7 3 2; 2 6 7; ... % Right wall
+            1 5 6; 6 2 1; ... % Near wall
+            7 8 4; 4 3 7; ... % Far wall
+            6 5 8; 8 7 6];    % Ceiling        
+        TR = triangulation(TRI, pts); 
+        
+        % Material indices
+        mtlIdx = [4; 4; ...                   % 4 for floor
+                  5; 5; 5; 5; 5; 5; 5; 5; ... % 5 for wall
+                  6; 6];                      % 6 for ceiling
+    end
+  end
+  
+  function rays = performRaytracing(obj)
+    [~, TR, mtlIdx] = getGeometry(obj);
+    
+    if strcmp(obj.Environment, 'Large hotel lobby')
+        refOrders = [0 1 2];
+    else
+        refOrders = [0 1];
+    end
+    
+    rays = comm.internal.channel.raytracing( ...
+        TR, obj.TransmitArrayPosition, obj.ReceiveArrayPosition, ...
+        mtlIdx, refOrders);
+  end
+  
+  function plotArray(obj, whichArray, color)
+    if strcmp(whichArray, 'Tx')
+        array = obj.TransmitArray;
+        ori = obj.TransmitArrayOrientation;
+        centerLCS = obj.TransmitArrayPosition;
+    else
+        array = obj.ReceiveArray;
+        ori = obj.ReceiveArrayOrientation;
+        centerLCS = obj.ReceiveArrayPosition;
+    end
+        
+    % Get element positions in GCS and draw them using scattering
+    ePosLCS = array.getElementPosition;
+    ePosGCS = convertPosLCStoGCS(ePosLCS, ori, centerLCS);
+    scatter3(ePosGCS(1,:), ePosGCS(2,:), ePosGCS(3,:), 5, color, ...
+        'filled', 'Tag', [class(obj), 'Array', whichArray]);
+
+    % Draw a panel to cover the array 
+    boxCorner = [ePosLCS(1,1,1) - array.ElementSpacing(2)/5; 
+                 ePosLCS(2,1,1) + array.ElementSpacing(1)/5; 
+                 0];
+    boxLCS = [boxCorner, ...
+              boxCorner .* [1; -1;  1], ...
+              boxCorner .* [-1; -1; 1], ...
+              boxCorner .* [-1; 1;  1]]; % 3 x 4
+    boxGCS = convertPosLCStoGCS(boxLCS, ori, centerLCS);
+    patch(boxGCS(1,:), boxGCS(2,:), boxGCS(3, :), [0.2632 0.2632 0.2632], ...
+        'Tag', [class(obj), 'BoxArray', whichArray]);
+
+    % Label array
+    text(centerLCS(1), centerLCS(2), max(boxGCS(3,:)) + 0.25, ...
+        whichArray, 'Color', color);
+  end
+  
+  function calcDRayPower(obj,model)
+      
+      if model==1
+          
+         fc = obj.CarrierFrequency;
+         A0 = obj.OxygenAbsorption;
+         c = physconst('lightspeed'); 
+         lambda = c/fc; % wavelength
+          for i = 1:length(obj.pDRays)
+           txPos = obj.TransmitArrayPosition;
+           rxPos = obj.ReceiveArrayPosition;
+           t1=txPos(1,:);
+           t2=txPos(2,:);
+           t3=txPos(3,:);
+           r1=rxPos(1,:);
+           r2=rxPos(2,:);
+           r3=rxPos(3,:);
+           
+           d=sqrt((t1-r1)^2+(t2-r2)^2+(t3-r3)^2);
+           
+           
+          
+           power = -20*log10((4*pi*fc*d)/c) - A0*d - 0.0105*d; 
+           power = 10^(power/10);
+           obj.pDRays(i).Power = (power) * exp(1i*2*pi*d/lambda);
+          end
+      else
+          
+    % Get constants
+    fc = obj.CarrierFrequency;
+    A0 = obj.OxygenAbsorption;
+    c = physconst('lightspeed'); 
+    lambda = c/fc; % wavelength
+    
+    % Loop over all D-Rays 
+    for i = 1:length(obj.pDRays)
+        thisRay = obj.pDRays(i);
+        
+        % Get time of arrival
+        toa = thisRay.TimeOfArrival;
+        
+        % Power loss from free space + oxygen absorption (in dB). That is
+        % all for a LOS ray. Refer to Table 4.1 in [1].
+        power = -20*log10(4*pi*fc*toa) - A0*c*toa; 
+        
+        % Convert to linear scale
+        power = 10^(power/10);
+        
+        % NLOS. Refer to Table 4.2 in [1]
+        if ~thisRay.LineOfSight 
+            % Iterate through all reflections to add reflection losses
+            for refIdx = 1:size(thisRay.ReflectionPositions, 2)
+                aor = thisRay.AngleOfReflections(refIdx); % In degree
+                mtl = obj.MaterialLibrary(thisRay.ReflectionMaterialIndex(refIdx));
+
+                % Calculate reflection loss for H and V pol (linear scale)
+                rp = mtl.RelativePermittivity;
+                B_h =  rp - sind(aor)^2;
+                B_v = (rp - sind(aor)^2)/rp^2;                
+                refLoss_h = abs((cosd(aor) - sqrt(B_h))/ ...
+                                (cosd(aor) + sqrt(B_h))).^2; 
+                refLoss_v = abs((cosd(aor) - sqrt(B_v))/ ...
+                                (cosd(aor) + sqrt(B_v))).^2; 
+
+                % Loss from surface roughness (in dB)
+                F = -80/log(10)* ...
+                    (pi*mtl.Roughness*cosd(aor)/lambda)^2; 
+                
+                % Convert F to linear scale
+                F = 10^(F/10);
+                
+                % Add reflection loss and loss from surface roughness to
+                % the total loss. H and V are treated separately through
+                % all reflections.
+                power = power .* F .* [refLoss_h, refLoss_v]; 
+            end
+        end
+        
+        % Assume an equal mix of H and V pol in the signal, the total power
+        % is the average of H and V. Meanwhile, take into account the phase
+        % change due to distance.
+        obj.pDRays(i).Power = mean(power) * exp(1i*2*pi*c*toa/lambda);
+    end
+      end
+  end
+  
+  function generateAllRays(obj)
+    % Generate random R-Rays. Section 4.3 in [1]
+    obj.pRRays = generateRRays(obj);
+        
+    % Intra-cluster expansion. Section 4.4 in [1]
+    obj.pDiffuseRays = generateIntraClusterRays(obj);
+  
+    % Sort rays based on ToA
+    allRays = [obj.pDRays, obj.pRRays, obj.pDiffuseRays];
+    [~, idx] = sort([allRays.TimeOfArrival]);
+    allRays = allRays(idx);
+    obj.pAllRays = allRays;
+    obj.pNumRays = length(allRays);
+  end
+
+  function rays = generateRRays(obj)
+    switch obj.Environment
+        case 'Open area hotspot' % Refer to Table 5-1 in [1]
+            numRRays = 3;
+            arrivalRate = 0.05e9;
+            powerDecayTime = 15e-9;
+            KFactor = 6; % in dB
+            AoD_az_range = 180;
+            AoD_el_range = 20;
+            AoA_az_range = 180;
+            AoA_el_range = 20;
+        case 'Street canyon hotspot' % Refer to Table 5-5 in [1]
+            numRRays = 5;
+            arrivalRate = 0.03e9;
+            powerDecayTime = 20e-9;
+            KFactor = 10; % in dB
+            AoD_az_range = 180;
+            AoD_el_range = 20;
+            AoA_az_range = 180;
+            AoA_el_range = 20;
+        otherwise % Large Hotel Lobby. Refer to Table 5-8 in [1]
+            numRRays = 5;
+            arrivalRate = 0.01e9;
+            powerDecayTime = 15e-9;
+            KFactor = 10; % in dB
+            AoD_az_range = 180;
+            AoD_el_range = 80;
+            AoA_az_range = 180;
+            AoA_el_range = 80;
+    end
+    
+    % Initialize R-Rays
+    rays = repmat( ...
+        comm.internal.channel.Ray('GenerationMethod', 'Stochastic'), ...
+        1, numRRays);
+    
+    % Get LOS D-Ray
+    LOSRay = obj.pDRays([obj.pDRays.LineOfSight]);
+    
+    % Assign ToA. 
+    toa = poissonRnd(obj, arrivalRate, numRRays);
+    toa_c = num2cell(LOSRay.TimeOfArrival + toa);
+    [rays.TimeOfArrival] = toa_c{:};
+
+    % Assign amplitude and phase. If the LOS ray gain is 1, the total
+    % energy of the cluster is 1/K. Refer to (4.2) and (4.3) in [1].
+    KfactorLinear = 10^(KFactor/10);
+    LOSPowerLinear = LOSRay.Power;
+    amplitude = sqrt(abs(LOSPowerLinear)^2/KfactorLinear * ...
+        exp(-toa/powerDecayTime)); 
+    power = ...
+        rayleighRnd(obj, amplitude) .* ... % Rayleigh distributed amplitdue
+        exp(2*pi*1i*generateRand(obj, ...
+        size(amplitude, 1), size(amplitude, 2))); % Uniformly distributed phase
+    power_c = num2cell(power); 
+    [rays.Power] = power_c{:};
+                        
+    % Assign AoD
+    aod = [(2*generateRand(obj, 1, numRRays)-1) * AoD_az_range; ...
+           (2*generateRand(obj, 1, numRRays)-1) * AoD_el_range];
+    % el is the angle from z-axis as per Fig. 3-9 in [1]
+    aod(2,:) = 90 - aod(2,:); 
+    aod_c = mat2cell(aod, 2, ones(1, numRRays));
+    [rays.AngleOfDeparture] = aod_c{:};
+            
+    % Assign AoA
+    aoa = [(2*generateRand(obj, 1, numRRays)-1) * AoA_az_range; ...
+           (2*generateRand(obj, 1, numRRays)-1) * AoA_el_range];
+    % el is the angle from z-axis as per Fig. 3-9 in [1]
+    aoa(2,:) = 90 - aoa(2,:); 
+    aoa_c = mat2cell(aoa, 2, ones(1, numRRays));
+    [rays.AngleOfArrival] = aoa_c{:};
+  end
+  
+  function rays = generateIntraClusterRays(obj) 
+    switch obj.Environment
+        case 'Open area hotspot' % Refer to Table 5-2 in [1]
+            numPostRays = 4;
+            arrivalRate = 0.31e9;
+            powerDecayTime = 4.5e-9;
+            KFactor = 4; % in dB
+        case 'Street canyon hotspot' % Refer to Table 5-6 in [1]
+            numPostRays = 4;
+            arrivalRate = 0.31e9;
+            powerDecayTime = 4.5e-9;
+            KFactor = 4; % in dB
+        otherwise % Large Hotel Lobby. Refer to Table 5-9 in [1]
+            numPostRays = 6;
+            arrivalRate = 0.31e9;
+            powerDecayTime = 4.5e-9;
+            KFactor = 10; % in dB
+    end
+
+    % Cursor rays are combined D-Rays and R-Rays, with LOS ray excluded.
+    cursorRays = [obj.pDRays(~[obj.pDRays.LineOfSight]), obj.pRRays];     
+    rays = repmat(...
+        comm.internal.channel.Ray('GenerationMethod', 'Stochastic'), ...
+        1, length(cursorRays) * numPostRays);
+    
+    % Interate through all cursor rays to expand NLOS ones into clusters
+    for i = 1:length(cursorRays)
+        idx = (i-1)*numPostRays + (1:numPostRays);
+        
+        % Assign ToA
+        toa = poissonRnd(obj, arrivalRate, numPostRays);
+        toa_c = num2cell(cursorRays(i).TimeOfArrival + toa);
+        [rays(idx).TimeOfArrival] = toa_c{:};
+
+        % Assign amplitude and phase. If the LOS ray gain is 1, the total
+        % energy of the cluster is 1/K. Refer to (4.6) and (4.7) in [1].
+        KfactorLinear = 10^(KFactor/10);
+        amplitude = sqrt(abs(cursorRays(i).Power)^2/KfactorLinear * ...
+            exp(-toa/powerDecayTime)); 
+        power = ...
+            rayleighRnd(obj, amplitude) .* ... % Rayleigh distributed amplitdue
+            exp(2*pi*1i*generateRand(obj, ...
+            size(amplitude, 1), size(amplitude, 2))); % Uniformly distributed phase
+        power_c = num2cell(power); 
+        [rays(idx).Power] = power_c{:};
+
+        % Assign AoD: RMS angle spread is 5 degree for both az and el.
+        % Refer to the 2nd paragraph of Section 4.4 in [1].
+        aod = cursorRays(i).AngleOfDeparture + generateRandn(obj, 2, numPostRays) * 5;
+        aod = convertToValidAngles(aod);
+        aod_c = mat2cell(aod, 2, ones(1, numPostRays));
+        [rays(idx).AngleOfDeparture] = aod_c{:};
+
+        % Assign AoA: RMS angle spread is 5 degree for both az and el.
+        % Refer to the 2nd paragraph of Section 4.4 in [1].
+        aoa = cursorRays(i).AngleOfArrival + generateRandn(obj, 2, numPostRays) * 5;
+        aoa = convertToValidAngles(aoa);
+        aoa_c = mat2cell(aoa, 2, ones(1, numPostRays));
+        [rays(idx).AngleOfArrival] = aoa_c{:};
+    end
+  end
+  
+  function calcCIRWithBF(obj)
+    allRays = obj.pAllRays;
+    NP = obj.pNumRays;
+    
+    % Get AoD and AoA in GCS
+    allAoD = [allRays.AngleOfDeparture];
+    allAoA = [allRays.AngleOfArrival];
+    
+    % Convert AoD and AoA from GCS to LCS
+    allAoD = convertAngleGCStoLCS(allAoD, obj.TransmitArrayOrientation);
+    allAoA = convertAngleGCStoLCS(allAoA, obj.ReceiveArrayOrientation);
+    
+    % Get Tx and Rx phasor/steering vector for each ray
+    txPV = obj.TransmitArray.getPhasorVector(obj.CarrierFrequency, allAoD); % [Nt, NP]
+    rxPV = obj.ReceiveArray.getPhasorVector(obj.CarrierFrequency, allAoA);  % [Nr, NP]
+    
+    % Get Tx and Rx array field pattern in linear scale
+    txFP = 10.^(obj.TransmitArray.PatternGain/10);
+    rxFP = 10.^(obj.ReceiveArray.PatternGain/10);
+
+    % Channel CIR without beamforming and phase changes from Doppler shifts
+    CIRWithoutBF = ...                               % [Nt, Nr, NP]
+        reshape([allRays.Power], 1, 1, []) .* ...    % [1,  1,  NP]
+        txFP .* rxFP .* ...                          % [1,  1,  1]
+        reshape(txPV, [], 1, NP) .* ...              % [Nt, 1,  NP]
+        reshape(conj(rxPV), 1, [], NP);              % [1,  Nr, NP]
+    
+    % Get beamforming vector
+    if strcmp(obj.BeamformingMethod, 'Maximum power ray')
+        [~, idx] = max(abs([allRays.Power]));
+        txBF = conj(txPV(:, idx));
+        rxBF = conj(rxPV(:, idx));
+    else
+        txBF = obj.TransmitBeamformingVector; % [Nt, 1]
+        rxBF = obj.ReceiveBeamformingVector;  % [Nr, 1]
+    end
+    
+    % Apply Tx and Rx beamforming. The resulting CIR dimension is [NTS,
+    % NRS, NP] with NTS = NRS = 1, where NTS and NRS is the number of
+    % input/output streams of the channel.
+    CIR = sum(sum(conj(txBF) .* CIRWithoutBF .* rxBF.', 1), 2); 
+    
+    % Normalize CIR if any
+    if obj.NormalizeImpulseResponses
+       CIR = CIR/norm(CIR(:));
+    end    
+    
+    obj.pStaticCIR = permute(CIR, [4 3 1 2]); % [1, NP, NTS, NRS] with NTS = NRS = 1
+  end 
+  
+  function generateDopplerShifts(obj)
+    % Generate random Rx velocity
+    velRx = generateRxVelocity(obj);
+    
+    % Calculate Doppler shift for each ray. 
+    % Refer to (4.8) and (4.9) in [1].
+    aoa = [obj.pAllRays.AngleOfArrival];
+    [dirX, dirY, dirZ] = ...
+        sph2cart(aoa(1, :)/180*pi, (90-aoa(2, :))/180*pi, 1);
+    dir = [dirX; dirY; dirZ];
+    obj.pDopplerShift = (velRx' * dir) * ...
+        obj.CarrierFrequency / physconst('lightspeed'); % [1, NP];
+  end
+
+  function vel = generateRxVelocity(obj)
+    switch obj.Environment
+        case 'Open area hotspot' % Refer to Table 5-3 in [1]
+            sigmaX = 1;
+            sigmaY = 1;
+            sigmaZ = 0.05;
+            tauZ   = 1;
+            f0     = 2; 
+        case 'Street canyon hotspot' % Refer to Table 5-6 in [1]
+            sigmaX = 1;
+            sigmaY = 0.1;
+            sigmaZ = 0.05;
+            tauZ   = 1;
+            f0     = 2; 
+        otherwise % Large Hotel Lobby. Refer to Table 5-9 in [1]
+            sigmaX = 0.1;
+            sigmaY = 0.1;
+            sigmaZ = 0;
+    end
+        
+    % Generate velocity in x and y. Refer to (4.11) in [1].
+    v_x = sigmaX * generateRandn(obj, 1, 1);
+    v_y = sigmaY * generateRandn(obj, 1, 1);
+    
+    % Generate velocity in z. Refer to (4.12) in [1].
+    if sigmaZ > 0          
+        % The Ts choice is tricky. 0.1 second seems reasonable because of
+        % no dramatic velocity change during 0.1s for a hand-holding phone
+        % or tablet. It is also worth trying other numbers. 
+        Ts = .1;
+        
+        % Get covariance matrix. Given the f0, tauZ values above and
+        % reasonbly small Ts (<<1), M is always positive semi-definite.
+        K_z = sigmaZ^2 * exp(-Ts^2/tauZ^2) * cos(2*pi*f0*Ts); 
+        M = [sigmaZ^2 K_z; K_z sigmaZ^2];
+        
+        % Generate 2 samples from gaussian random process with zero mean.
+        % Borrow this code from mvnrnd to avoid product dependency. In
+        % mvnrnd, cholcov(M) is used instead of chol(M). But for a positive
+        % semi-definite M, they are the same. 
+        z_t = randn(1, 2) * chol(M);
+
+        % Velocity in z is the first derivative of z(t)
+        v_z = diff(z_t)/Ts; 
+    else
+        v_z = 0;
+    end
+    
+    vel = [v_x; v_y; v_z];
+  end
+  
+  function y = poissonRnd(obj, lambda, N)
+    % Borrow this code from exprnd to avoid product dependency
+    
+    % y = cumsum(exprnd(1/lambda, 1, N));
+    y = cumsum(-1/lambda .* log(generateRand(obj, 1, N))); 
+  end
+
+  function y = rayleighRnd(obj, p)
+    % Borrow this code from raylrnd to avoid product dependency
+
+    y = sqrt(generateRandn(obj, size(p, 1), size(p, 2)).^2 + ...
+             generateRandn(obj, size(p, 1), size(p, 2)).^2) .* p;
+  end
+end
+
+methods(Access = private) % Channel filter related methods
+  function setupChannelFilter(obj, pathDelays)
+    coder.extrinsic('comm.internal.FadingChannel.designInterpFilter');
+   
+    % Fixed filter length
+    filterLen = obj.pChannelFilterLength;
+    % Number of interpolation points per sample
+    L = ceil(1/(2*obj.pFracDelayTolerance)); 
+    % Path delays in samples
+    tRatio = (pathDelays*obj.SampleRate).';    
+    % Fractional delays in samples
+    fracDelay = coder.const(mod(tRatio,1));
+    % Get interpolation phases that ranges from 1 to L+1
+    [~, phaseIdx] = coder.const(@min, ...
+        abs(bsxfun(@minus, fracDelay, [0, (L-1:-1:1)/L, 1])), [], 2); 
+    % When the frac delay is closest to 0 or 1, no interpolation is needed
+    obj.pIsPathOnSampleTime = any(bsxfun(@eq, phaseIdx, [1 L+1]), 2);
+    % Get integer delay number. It is the integer part of path delay unless
+    % the frac delay is in [1-approxError, 1]. In that case, it's the
+    % integer part of the path delay plus 1.
+    intDelay = floor(tRatio) + (phaseIdx == L+1);
+    
+    % Tap index range for each path
+    tapRange = bsxfun(@plus, intDelay, ...
+        bsxfun(@times, (1-obj.pIsPathOnSampleTime), ...
+        [-filterLen/2+1,filterLen/2]));
+    % Tap index range to cover all the paths. Start no larger than 0.
+    tapDelay = min([0;tapRange(:,1)]) : max(tapRange(:,2));
+
+    obj.pTapDelays = tapDelay;
+    obj.pNumChannelTaps = length(tapDelay);
+    obj.pChannelFilterDelay = min(intDelay) - tapDelay(1);
+    obj.pPathIntegerDelays = tapRange(:,1) - tapDelay(1); % Update integer delays
+    
+    % Construct FIR interpolation matrix and initialize filter state
+    if ~all(obj.pIsPathOnSampleTime)
+        halfAstop = ...% Value phaseIdx fracDelay
+            [592 31 35 38 40 41 42 43 44 45 45 45 45 45 44 44 43 42 41 39 37 34 29 25];
+        Astop = [0, halfAstop, 24, fliplr(halfAstop)];               
+        obj.pInterpMatrix = coder.const(...
+            comm.internal.FadingChannel.designInterpFilter( ...
+            L, filterLen, phaseIdx, Astop));
+    end
+  end
+  
+  function initChannelFilter(obj)
+    % Construct FIR interpolation matrix and initialize filter state
+    Nt = obj.NumTxStreams;
+    if ~all(obj.pIsPathOnSampleTime)
+        NP = obj.pNumRays;
+        obj.pChannelFilterState = coder.nullcopy( ...
+            complex(zeros(obj.pChannelFilterLength-1, Nt*NP)));
+    end
+    
+    % Instantiate dsp.Delay objects 
+    if any(obj.pPathIntegerDelays > 0)
+        obj.pChannelIntegerDelay = ...
+            dsp.Delay(kron(obj.pPathIntegerDelays', ones(1, Nt)));
+    end    
+  end
+  
+  function resetChannelFilter(obj)
+    % Initialize FIR channel filter
+    if ~all(obj.pIsPathOnSampleTime)
+        obj.pChannelFilterState(:,:) = complex(0);
+    end
+    
+    % Reset dsp.Delay objects
+    if any(obj.pPathIntegerDelays > 0) 
+        reset(obj.pChannelIntegerDelay); 
+    end
+  end
+  
+  function y = performChanFilter(obj, x, g)
+    Ns = size(x, 1);    % Number of samples
+    Nt = size(x, 2);    % Number of Tx/streams
+    NP = obj.pNumRays;  % Number of paths
+    
+    % Get interpolation filter coefficients and state
+    if ~all(obj.pIsPathOnSampleTime)
+        interpMtx = obj.pInterpMatrix;
+        filterState = obj.pChannelFilterState; 
+    end
+    
+    % Perform interpolation for fractional delays
+    filterOut = coder.nullcopy(complex(zeros(Ns, Nt*NP)));
+    for i = coder.unroll(1:NP)
+        colIdx = (i-1)*Nt + (1:Nt);
+        if obj.pIsPathOnSampleTime(i)
+            filterOut(:, colIdx) = x(:,1:Nt);
+        else                
+            [filterOut(:,colIdx), filterState(:,colIdx)] = ...
+               filter(interpMtx(i, :), 1, x(:,1:Nt), filterState(:,colIdx), 1);
+        end
+    end
+    
+    % Save interpolation filter state
+    if ~all(obj.pIsPathOnSampleTime)
+        obj.pChannelFilterState = filterState;
+    end
+    
+    % Perform integer delays
+    if any(obj.pPathIntegerDelays > 0)
+        filterOut = obj.pChannelIntegerDelay(complex(filterOut));
+    end
+    
+    % Apply path gain to interpolated input samples and combined across Tx 
+    % discrete paths. Note that g is of size [Ns, Nr, Nt, NP].
+    y = sum(bsxfun(@times, reshape(g, Ns, [], Nt*NP), ...
+        reshape(filterOut, Ns, 1, Nt*NP)), 3);        
+  end
+end
+
+methods(Access = private) % RNG related methods
+  function setupRNG(obj)
+    if ~strcmp(obj.RandomStream, 'Global stream') 
+        if isempty(coder.target)   
+            obj.pRNGStream = RandStream('mt19937ar', 'Seed', obj.Seed);
+        else
+            obj.pRNGStream = coder.internal.RandStream('mt19937ar', 'Seed', obj.Seed);
+        end
+    end    
+  end
+  
+  function resetRNG(obj)
+    % Reset random number generator if it is not global stream    
+    if ~strcmp(obj.RandomStream, 'Global stream') 
+        reset(obj.pRNGStream, obj.Seed);
+    end
+  end
+  
+  function y = generateRandn(obj, numRows, numCols) 
+    % Generate Gaussian distributed random numbers row-wisely    
+
+    if strcmp(obj.RandomStream, 'Global stream')
+        y = (randn(numCols, numRows)).'; 
+    else
+        y = (randn(obj.pRNGStream, numCols, numRows)).';
+    end
+  end
+  
+  function y = generateRand(obj, numRows, numCols) 
+    % Generate uniform distributed random numbers row-wisely
+    
+    if strcmp(obj.RandomStream, 'Global stream') 
+        y = (rand(numCols, numRows)).'; 
+    else
+        y = (rand(obj.pRNGStream, numCols, numRows)).'; 
+    end
+  end
+end
+
+end
+
+% Local helper functions for angles conversion and calculation
+function angleLCS = convertAngleGCStoLCS(angleGCS, ori)
+
+azAng = angleGCS(1, :); 
+elAng = angleGCS(2, :);
+
+% Get [x;y;z] direction in GCS
+dir = [sind(elAng).*cosd(azAng);...
+       sind(elAng).*sind(azAng);...
+       cosd(elAng)]; 
+
+% Get [x;y;z] direction in LCS
+R = getLCStoGCSRotationMatrix(ori);
+dirLCS = R'*dir;
+
+% Convert [x;y;z] direction to [az;el] in LCS
+[az, el] = cart2sph(dirLCS(1,:), dirLCS(2,:), dirLCS(3,:));
+angleLCS = [az*180/pi; 90-el*180/pi];
+
+end
+
+function posGCS = convertPosLCStoGCS(posLCS, ori, centerLCS)
+% Convert [x;y;z] position from LCS to GCS, given LCS orientation and LCS
+% center position in GCS. 
+
+R = getLCStoGCSRotationMatrix(ori);
+posGCS = centerLCS + R * posLCS;
+
+end
+
+function R = getLCStoGCSRotationMatrix(ori)
+% Rotation matrix from LCS to GCS. Refer to Section 7.1.3 in [3] and
+% Section 6.3.3 in [2]. 
+% R' = inv(R) is the rotation matrix from GCS to LCS.
+
+alpha = ori(1);
+beta  = ori(2); 
+gamma = ori(3);
+
+R = ...
+    [cosd(alpha) -sind(alpha) 0; sind(alpha) cosd(alpha) 0; 0 0 1] * ...
+    [cosd(beta) 0 sind(beta); 0 1 0; -sind(beta) 0 cosd(beta)] * ...
+    [1 0 0; 0 cosd(gamma) -sind(gamma); 0 sind(gamma) cosd(gamma)];  
+end
+
+function y = convertToValidAngles(x)
+% Convert az and el angles in degree into valid range: az in (-180, 180]
+% and el in [0 180]. The 1st row of x represents az and the 2nd row of x
+% represents el. 
+
+temp = mod(x(2, :), 360); 
+y = [mod(x(1,:) - 180, -360) + 180; % Convert az into (-180, 180].
+     temp - (temp > 180) .* 2 .* mod(temp, 180)];
+ 
+end
+
+% [EOF]
